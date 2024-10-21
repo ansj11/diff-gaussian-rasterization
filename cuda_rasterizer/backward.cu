@@ -562,9 +562,9 @@ renderCUDA(
 
 				dL_dopa += (c_d - accum_depth_rec[ch]) * dL_dpixel_depth[ch];
 				if (ch == 0)
-					atomicAdd(&dL_dmean2D[global_id].x, dpixel_depth_ddepth * dL_dpixel_depth[ch] * 0.5 * W);
+					atomicAdd(&dL_dmean2D[global_id].x, dpixel_depth_ddepth * dL_dpixel_depth[ch]);
 				else if (ch == 1)
-					atomicAdd(&dL_dmean2D[global_id].y, dpixel_depth_ddepth * dL_dpixel_depth[ch] * 0.5 * H);
+					atomicAdd(&dL_dmean2D[global_id].y, dpixel_depth_ddepth * dL_dpixel_depth[ch]);
 				else if (ch == 2) {
 					atomicAdd(&(dL_ddepths[global_id]), dpixel_depth_ddepth * dL_dpixel_depth[ch]);
 				}
