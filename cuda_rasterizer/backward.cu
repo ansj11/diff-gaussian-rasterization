@@ -470,20 +470,21 @@ renderCUDA(
 
 	float accum_rec[C] = { 0 };
 	float dL_dpixel[C];
-	float accum_depth_rec = 0;
-	float dL_dpixel_depth;
+	float accum_depth_rec[C] = { 0 };
+	float dL_dpixel_depth[C];
 	float accum_alpha_rec = 0;
 	float dL_dalpha;
 	if (inside) {
-		for (int i = 0; i < C; i++)
+		for (int i = 0; i < C; i++) {
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
-		dL_dpixel_depth = dL_dpixel_depths[pix_id];
+			dL_dpixel_depth[i] = dL_dpixel_depths[i * H * W + pix_id];
+		}
 		dL_dalpha = dL_dalphas[pix_id];
 	}
 
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
-	float last_depth = 0;
+	float last_depth[C] = { 0 };
 
 	// Gradient of pixel coordinate w.r.t. normalized 
 	// screen-space viewport corrdinates (-1 to 1)
@@ -503,9 +504,10 @@ renderCUDA(
 			collected_id[block.thread_rank()] = coll_id;
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
-			for (int i = 0; i < C; i++)
+			for (int i = 0; i < C; i++) {
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
-			collected_depths[block.thread_rank()] = depths[coll_id];
+				collected_depths[i * BLOCK_SIZE + block.thread_rank()] = depths[coll_id * C + i];
+			}
 		}
 		block.sync();
 
@@ -553,15 +555,21 @@ renderCUDA(
 				// Atomic, since this pixel is just one of potentially
 				// many that were affected by this Gaussian.
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
+				
+				const float c_d = collected_depths[ch * BLOCK_SIZE + j];
+				accum_depth_rec[ch] = last_alpha * last_depth[ch] + (1.f - last_alpha) * accum_depth_rec[ch];
+				last_depth[ch] = c_d;
+
+				dL_dopa += (c_d - accum_depth_rec[ch]) * dL_dpixel_depth[ch];
+				if (ch == 0)
+					atomicAdd(&dL_dmean2D[global_id].x, dpixel_depth_ddepth * dL_dpixel_depth[ch] * 0.5 * W);
+				else if (ch == 1)
+					atomicAdd(&dL_dmean2D[global_id].y, dpixel_depth_ddepth * dL_dpixel_depth[ch] * 0.5 * H);
+				else if (ch == 2) {
+					atomicAdd(&(dL_ddepths[global_id]), dpixel_depth_ddepth * dL_dpixel_depth[ch]);
+				}
 			}
 			
-			// Propagate gradients from pixel depth to opacity
-			const float c_d = collected_depths[j];
-			accum_depth_rec = last_alpha * last_depth + (1.f - last_alpha) * accum_depth_rec;
-			last_depth = c_d;
-			dL_dopa += (c_d - accum_depth_rec) * dL_dpixel_depth;
-			atomicAdd(&(dL_ddepths[global_id]), dpixel_depth_ddepth * dL_dpixel_depth);
-
 			// Propagate gradients from pixel alpha (weights_sum) to opacity
 			accum_alpha_rec = last_alpha + (1.f - last_alpha) * accum_alpha_rec;
 			dL_dopa += (1 - accum_alpha_rec) * dL_dalpha; //- (alpha - accum_alpha_rec) * dL_dalpha;
